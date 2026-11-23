@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Smeltworks Idle telemetry</title>
+<link rel="stylesheet" href="./style.css" />
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <span class="brand-mark">▣</span>
+    <h1>Smeltworks Idle <span class="muted">telemetry</span></h1>
+  </div>
+
+  <div class="range" role="group" aria-label="date range">
+    <button data-range="7">7d</button>
+    <button data-range="30" class="active">30d</button>
+    <button data-range="90">90d</button>
+    <button data-range="0">all</button>
+  </div>
+
+  <div class="topbar-right">
+    <span id="status" class="status" aria-live="polite"></span>
+    <button id="refresh" class="btn primary">refresh</button>
+    <button id="settings-toggle" class="btn icon" title="connection settings" aria-expanded="false">⚙</button>
+  </div>
+</header>
+
+<section id="settings" class="settings" hidden>
+  <label>
+    worker URL
+    <input id="worker-url" type="text" placeholder="https://smeltworks-idle-logging.<you>.workers.dev" autocomplete="off" spellcheck="false" />
+  </label>
+  <label>
+    token
+    <input id="token" type="password" placeholder="DASHBOARD_TOKEN" autocomplete="off" />
+  </label>
+  <button id="save" class="btn primary">save &amp; refresh</button>
+  <button id="logout" class="btn ghost">forget</button>
+  <p class="hint">Stored in this browser's localStorage only. No server-side accounts.</p>
+</section>
+
+<main>
+  <section id="empty" class="empty">
+    <p>Enter the worker URL and token, then refresh.</p>
+    <p class="muted">Open the ⚙ settings to paste them in.</p>
+  </section>
+
+  <div id="content" hidden>
+    <!-- period stats -->
+    <section class="tiles" id="tiles"></section>
+
+    <!-- activity over time -->
+    <section class="panel">
+      <div class="panel-head">
+        <h2>Activity <span class="muted" id="activity-sub"></span></h2>
+        <div class="panel-tools">
+          <div class="legend" id="activity-legend"></div>
+          <button class="btn ghost small" id="activity-table-toggle" aria-pressed="false">table</button>
+        </div>
+      </div>
+      <div id="activity-chart" class="linechart"></div>
+      <div id="activity-table" class="table-wrap" hidden></div>
+    </section>
+
+    <!-- aggregate grid -->
+    <section class="grid">
+      <div class="panel">
+        <div class="panel-head"><h2>How deep runs go <span class="muted">runs by the deepest level they reached</span></h2></div>
+        <div id="chart-depth" class="bars"></div>
+      </div>
+      <div class="panel">
+        <div class="panel-head"><h2>Depth by run <span class="muted">avg deepest level · avg cores earned</span></h2></div>
+        <div id="chart-depth-run" class="bars"></div>
+      </div>
+      <div class="panel">
+        <div class="panel-head"><h2>Run length <span class="muted">avg game time, by run number</span></h2></div>
+        <div id="chart-duration" class="bars"></div>
+      </div>
+      <div class="panel">
+        <div class="panel-head"><h2>Tree size <span class="muted">avg nodes held as a run begins</span></h2></div>
+        <div id="chart-tree" class="bars"></div>
+      </div>
+      <div class="panel">
+        <div class="panel-head"><h2>Forge &amp; weapons <span class="muted">per finished run · grey: on the line when it ended</span></h2></div>
+        <div id="chart-forge" class="bars"></div>
+      </div>
+      <div class="panel">
+        <div class="panel-head"><h2>Skills &amp; crafting <span class="muted">per finished run</span></h2></div>
+        <div id="chart-craft" class="bars"></div>
+      </div>
+      <div class="panel">
+        <div class="panel-head"><h2>Nodes bought <span class="muted">times bought · avg run it was bought for</span></h2></div>
+        <div id="chart-bought" class="bars scroll"></div>
+      </div>
+      <div class="panel">
+        <div class="panel-head"><h2>Nodes held <span class="muted">share of runs that began with it</span></h2></div>
+        <div id="chart-held" class="bars scroll"></div>
+      </div>
+      <div class="panel">
+        <div class="panel-head"><h2>Nodes unspecced <span class="muted">times handed back</span></h2></div>
+        <div id="chart-dropped" class="bars scroll"></div>
+      </div>
+      <div class="panel">
+        <div class="panel-head"><h2>Never bought <span class="muted">nodes no run in this range began with</span></h2></div>
+        <div id="chart-unheld" class="chips"></div>
+      </div>
+      <div class="panel">
+        <div class="panel-head"><h2>Errors</h2></div>
+        <div id="chart-errors" class="bars"></div>
+      </div>
+      <div class="panel">
+        <div class="panel-head"><h2>Platform &amp; version</h2></div>
+        <div id="chart-platform" class="bars"></div>
+      </div>
+    </section>
+
+    <!-- recent sessions (raw feed, last ~45 uploads) -->
+    <section class="panel">
+      <div class="panel-head">
+        <h2>Recent sessions <span class="muted" id="runs-sub"></span></h2>
+        <div class="panel-tools">
+          <label class="inline">type
+            <select id="type-filter">
+              <option value="">all</option>
+              <option value="run_end">run_end</option>
+              <option value="run_start">run_start</option>
+              <option value="session_start">session_start</option>
+              <option value="error">error</option>
+            </select>
+          </label>
+          <label class="inline">day
+            <select id="day"><option value="">latest</option></select>
+          </label>
+          <label class="inline">sort
+            <select id="sort">
+              <option value="recent">recent</option>
+              <option value="player">player</option>
+            </select>
+          </label>
+        </div>
+      </div>
+      <div id="feed" class="feed"></div>
+    </section>
+
+    <details class="panel collapsible">
+      <summary><h2>Raw events <span class="muted">latest 50</span></h2></summary>
+      <pre id="raw"></pre>
+    </details>
+  </div>
+</main>
+
+<div id="tooltip" class="tooltip" hidden></div>
+
+<script src="./nodes.js"></script>
+<script src="./app.js"></script>
+</body>
+</html>

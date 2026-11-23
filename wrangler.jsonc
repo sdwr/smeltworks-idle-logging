@@ -1,0 +1,30 @@
+{
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "smeltworks-idle-logging",
+	"main": "src/index.ts",
+	"compatibility_date": "2026-06-05",
+	"observability": {
+		"enabled": true
+	},
+	"upload_source_maps": true,
+	// Hourly: fold today's new event files into summary/all.json, finish yesterday.
+	"triggers": {
+		"crons": [
+			"15 * * * *"
+		]
+	},
+	"compatibility_flags": [
+		"nodejs_compat"
+	],
+	// R2 bucket binding. Create the bucket once with:
+	//   wrangler r2 bucket create smeltworks-idle-logging
+	"r2_buckets": [
+		{
+			"binding": "BUCKET",
+			"bucket_name": "smeltworks-idle-logging"
+		}
+	]
+	// Secrets (never commit these — they're configured server-side):
+	//   wrangler secret put DASHBOARD_TOKEN
+	//     (pick a long random string; paste into the dashboard once on load)
+}
