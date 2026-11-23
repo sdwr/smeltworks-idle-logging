@@ -172,3 +172,36 @@ test("progress: where runs stop without a prestige, when each level is reached, 
 	assert.deepEqual(m.reach_n, { 1: 2, 2: 2, 3: 4, 4: 2, 6: 1, 7: 1 }); assert.deepEqual(m.reach_secs, { 1: 0, 2: 160, 3: 400, 4: 680, 6: 0, 7: 80 });
 	assert.deepEqual(m.fails_by_level, { 3: 1, 4: 6, 2: 1 });
 });
+
+test("players: each browser's play time, depth and runs, the same however often a day is merged", async () => {
+	const env = mkEnv(), d1 = "2025-03-06", d2 = "2025-03-07";
+	const at = (day, hm, o = {}) => ({ time: `${day}T${hm}:00.000Z`, ...o }), two = { install: "i2", session: "s2", os: "Mac" };
+	env.BUCKET.store.set(`events/${d1}/10-00-00.000-a.ndjson`, [
+		// i1: a new save, plays its first run for 9 minutes without ever reaching the tree (only progress says so)
+		ev("session_start", at(d1, "10:00"), { n: 1, deepest: 1, level: 1, playtime: 0, fresh: true }),
+		ev("progress", { run: "r1", ...at(d1, "10:04") }, { n: 1, from: 0, to: 2, secs: 240, levels: [], fails: {} }),
+		ev("progress", { run: "r1", ...at(d1, "10:09") }, { n: 1, from: 2, to: 3, secs: 540, levels: [], fails: {} }),
+		// i2: finishes run 4, begins run 5 and gets 5 minutes into it
+		runEnd("q4", 4, 12, { playtime: 5000, deepest: 12 }, { ...two, ...at(d1, "11:00") }),
+		runStart("q5", 5, { playtime: 5000, deepest: 12 }, { ...two, ...at(d1, "11:01") }),
+		ev("progress", { run: "q5", ...two, ...at(d1, "11:06") }, { n: 5, from: 1, to: 9, secs: 300, levels: [], fails: {} }),
+		ev("progress", { run: "", install: "", time: "nonsense" }, { secs: 1e12, to: "deep" }),
+	].join("\n"));
+	env.BUCKET.store.set(`events/${d2}/09-00-00.000-a.ndjson`, [
+		ev("session_start", { ...two, ...at(d2, "09:00"), os: "Windows", version: "0.88.0" }, { n: 5, deepest: 12, level: 14, playtime: 5600 }),
+		runEnd("q5", 5, 15, { playtime: 6100, deepest: 15 }, { ...two, ...at(d2, "09:10"), os: "Windows", version: "0.88.0" }),
+	].join("\n"));
+	const roll = (d) => call(env, "/rollup?day=" + d, { method: "POST", headers: auth });
+	await roll(d1); await roll(d2); await roll(d1); await roll(d2);
+	const s = await (await call(env, "/summary", { headers: auth })).json(), P = s.all.players;
+	assert.deepEqual(Object.keys(P).sort(), ["i1", "i2"]);
+	assert.equal(P.i1.playtime, 540, "nine minutes, though the save never said so itself"); assert.equal(P.i1.deepest, 3); assert.equal(P.i1.runs, 0); assert.equal(P.i1.run, 1);
+	assert.equal(P.i1.first, d1 + "T10:00:00.000Z"); assert.equal(P.i1.last, d1 + "T10:09:00.000Z"); assert.equal(P.i1.os, "Windows");
+	assert.equal(P.i2.playtime, 6100); assert.equal(P.i2.deepest, 15); assert.equal(P.i2.runs, 5); assert.equal(P.i2.first, d1 + "T11:00:00.000Z"); assert.equal(P.i2.last, d2 + "T09:10:00.000Z");
+	assert.equal(P.i2.os, "Windows", "as last seen"); assert.equal(P.i2.version, "0.88.0");
+	// the first day alone: five minutes past where run 5 began
+	const day1 = JSON.parse(env.BUCKET.store.get(`summary/${d1}.json`)).players.i2; assert.equal(day1.playtime, 5300); assert.equal(day1.runs, 4); assert.equal(day1.deepest, 12);
+	// merging again changes nothing
+	const before = JSON.stringify(P); await roll(d1); await roll(d2);
+	assert.equal(JSON.stringify((await (await call(env, "/summary", { headers: auth })).json()).all.players), before);
+});

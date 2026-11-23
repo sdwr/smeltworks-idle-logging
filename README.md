@@ -16,6 +16,7 @@ how long runs are, how deep they go, which prestige nodes are bought, and what i
   - **forge and weapons per run**: forged, equipped, scrapped, type and socket rerolls, upgrades;
   - **skills and crafting per run**: dropped, bought, salvaged, and each craft;
   - **nodes**: bought (and for which run on average), held as a run begins, unspecced, and never bought;
+  - **players**: one row per browser with its total play time, runs finished, deepest level and when it was first and last seen, and how the players spread over play time and runs finished;
   - errors, platform and version, and a feed of recent sessions.
 - **Rollups**: a Worker can only open about 50 subrequests per invocation on the free plan, so reading raw history
   is capped at about 45 files. Instead each receipt day is folded into `summary/<day>.json` (incrementally, from a
@@ -175,6 +176,14 @@ Per date, counts and sums only (never an average), so days add together: see `Da
 [src/index.ts](src/index.ts). Runs are numbered from 1 on each save and everything from the 60th on shares one
 bucket; levels past 500 share one. If `DateMetrics` changes shape, bump `SUMMARY_VERSION`: every day is then
 rebuilt from the raw files the next time the dashboard loads.
+
+### Players
+
+`summary/all.json` also holds `players`: one record per install id (a random id per browser), with the highest
+play time, deepest level and runs finished it has reported, the run it was last seen in, and its first and last
+event times. Nothing new is asked of the game: it comes from what every event already carries. Play time is the
+save's game time; for a run in progress it is taken from the `progress` events, so it is at most a couple of
+minutes behind. At most 5,000 players are kept.
 
 ### Node names
 

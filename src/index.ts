@@ -53,7 +53,7 @@ const CONCURRENCY = 6;
 // Bump when DateMetrics changes shape: stale day files are rebuilt from raw
 // events and every day in all.json is marked incomplete so the dashboard
 // re-rolls them.
-const SUMMARY_VERSION = 2;
+const SUMMARY_VERSION = 3;
 const ALL_KEY = "summary/all.json";
 
 function json(body: unknown, status = 200): Response {
@@ -274,11 +274,60 @@ export interface DaySummary {
 	dates: Record<string, DateMetrics>;
 	// Identity sets, kept only in the day file so a resumed rollup can dedupe.
 	sets: Record<string, { runs: string[]; installs: string[] }>;
+	players?: Record<string, Player>;
+}
+
+// One browser's save, as far as its events say. Every field is a highest, a lowest or a latest, never a sum, so
+// a day can be merged into the whole any number of times and the answer is the same.
+export interface Player {
+	first: string;      // the earliest event's time
+	last: string;       // the latest event's time
+	playtime: number;   // the save's game time, seconds: the highest reported
+	deepest: number;    // the deepest level reached
+	runs: number;       // runs finished
+	run: number;        // the number of the run it was last seen in
+	os: string;
+	version: string;
+	rid?: string;       // the run a run_start was last seen for, and the save's play time as it began:
+	base?: number;      //   a progress event of that run then says how far past it the save has got
+}
+const MAX_PLAYERS = 5000;
+
+function mergePlayer(a: Player | undefined, b: Player): Player {
+	if (!a) return { ...b };
+	const newer = b.last >= a.last ? b : a;
+	return {
+		first: a.first && (!b.first || a.first <= b.first) ? a.first : b.first,
+		last: newer.last,
+		playtime: Math.max(a.playtime, b.playtime), deepest: Math.max(a.deepest, b.deepest), runs: Math.max(a.runs, b.runs),
+		run: newer.run, os: newer.os, version: newer.version, rid: newer.rid, base: newer.base,
+	};
+}
+
+// What one event says about the player who sent it.
+function foldPlayer(players: Record<string, Player>, install: string, e: any) {
+	if (!install) return;
+	let p = players[install];
+	if (!p) { if (Object.keys(players).length >= MAX_PLAYERS) return; p = players[install] = { first: "", last: "", playtime: 0, deepest: 0, runs: 0, run: 0, os: "", version: "" }; }
+	const d = e.data || {}, time = typeof e.time === "string" && !Number.isNaN(Date.parse(e.time)) ? e.time.slice(0, 24) : "";
+	if (time) { if (!p.first || time < p.first) p.first = time; if (time >= p.last) { p.last = time; p.os = String(e.os || "").slice(0, 20); p.version = String(e.version || "").slice(0, 20); if (runKey(d.n) != null) p.run = d.n; } }
+	const run = typeof e.run === "string" ? e.run.slice(0, 64) : "";
+	p.playtime = Math.max(p.playtime, num(d.playtime, 31_536_000));
+	if (e.type === "run_start") { p.rid = run; p.base = num(d.playtime, 31_536_000); p.runs = Math.max(p.runs, (runKey(d.n) != null ? d.n : 1) - 1); p.deepest = Math.max(p.deepest, levelKey(d.deepest) != null ? d.deepest : 0); }
+	else if (e.type === "session_start") { p.runs = Math.max(p.runs, (runKey(d.n) != null ? d.n : 1) - 1); p.deepest = Math.max(p.deepest, levelKey(d.deepest) != null ? d.deepest : 0, levelKey(d.level) != null ? d.level : 0); }
+	else if (e.type === "run_end") { p.runs = Math.max(p.runs, runKey(d.n) != null ? d.n : 0); p.deepest = Math.max(p.deepest, levelKey(d.level) != null ? d.level : 0); }
+	else if (e.type === "progress") {
+		// a run in progress: the save has been played at least as long as the run has, and that much past where the run began if that is known
+		const secs = num(d.secs, 2_592_000);
+		p.playtime = Math.max(p.playtime, secs + (run && run === p.rid ? p.base || 0 : 0));
+		p.deepest = Math.max(p.deepest, levelKey(d.to) != null ? d.to : 0);
+	}
 }
 
 interface AllSummary {
 	version: number;
 	updated: string;
+	players?: Record<string, Player>;
 	days: Record<string, { updated: string; files: number; complete: boolean; dates: Record<string, DateMetrics> }>;
 }
 
@@ -342,6 +391,7 @@ export function foldEvent(sum: DaySummary, e: any) {
 	m.events++;
 	const install = typeof e.install === "string" ? e.install.slice(0, 64) : "";
 	if (install && !sets.installs.includes(install)) sets.installs.push(install);
+	foldPlayer((sum.players ||= {}), install, e);
 	const run = typeof e.run === "string" ? e.run.slice(0, 64) : "";
 	bump(m.os, String(e.os || "").slice(0, 20));
 	bump(m.versions, String(e.version || "").slice(0, 20));
@@ -473,7 +523,10 @@ async function rollupDay(env: WorkerEnv, day: string): Promise<{ summary: DaySum
 	if (all.version !== SUMMARY_VERSION) {
 		// Shape changed: keep old numbers visible but flag every day for a re-roll.
 		for (const d of Object.values(all.days)) d.complete = false;
+		all.players = {};
 	}
+	const players = (all.players ||= {});
+	for (const [id, p] of Object.entries(sum.players || {})) if (players[id] || Object.keys(players).length < MAX_PLAYERS) players[id] = mergePlayer(players[id], p);
 	all.version = SUMMARY_VERSION;
 	all.updated = sum.updated;
 	all.days[day] = { updated: sum.updated, files: sum.files, complete: sum.complete, dates: sum.dates };

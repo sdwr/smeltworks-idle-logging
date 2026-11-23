@@ -132,6 +132,23 @@
       </div>
     </section>
 
+    <!-- players: one row per browser -->
+    <section class="grid">
+      <div class="panel">
+        <div class="panel-head"><h2>Play time <span class="muted">players by total time played</span></h2></div>
+        <div id="chart-playtime" class="bars"></div>
+      </div>
+      <div class="panel">
+        <div class="panel-head"><h2>How far players get <span class="muted">players by runs finished</span></h2></div>
+        <div id="chart-playerruns" class="bars"></div>
+      </div>
+    </section>
+    <section class="panel">
+      <div class="panel-head"><h2>Players <span class="muted" id="players-sub"></span></h2></div>
+      <div id="players-table" class="table-wrap scroll"></div>
+      <p class="note">A player is one browser: the same person on two devices is two rows. Play time is the save's game time as last reported, so someone playing right now is a few minutes ahead of their row.</p>
+    </section>
+
     <!-- recent sessions (raw feed, last ~45 uploads) -->
     <section class="panel">
       <div class="panel-head">

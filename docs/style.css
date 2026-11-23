@@ -172,6 +172,7 @@ table.data th { color: var(--muted); font-weight: 500; }
 .chip.big { color: var(--ink); border-color: var(--border); }
 .event-run_start { border-left-color: var(--s-runs); }
 .event-progress { border-left-color: var(--hairline); }
+.table-wrap.scroll { max-height: 460px; overflow: auto; scrollbar-width: thin; }
 .panel .note { margin: 10px 0 0; font-size: 11px; color: var(--muted); }
 .bar-row {
   display: grid; grid-template-columns: minmax(48px, 30%) 1fr 56px; gap: 10px; align-items: center; font-size: 12px;

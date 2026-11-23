@@ -254,6 +254,7 @@ function renderHistory() {
   renderTiles(cur, curTotals, prevTotals);
   renderActivity(cur);
   renderAggregates(curTotals);
+  renderPlayers(cur);
   $("activity-sub").textContent = rangeDays > 0
     ? `last ${rangeDays} days · per day`
     : `${shortDate(cur[0])} – ${shortDate(cur[cur.length - 1])} · per day`;
@@ -575,6 +576,26 @@ function renderAggregates(t) {
 }
 
 // One short token for a tile: 45s, 24.2m, 2.4h.
+// ---- players: one row per browser, from the worker's per-player records ----
+const TIME_BANDS = [[0, 60, "under 1m"], [60, 300, "1-5m"], [300, 900, "5-15m"], [900, 1800, "15-30m"], [1800, 3600, "30-60m"], [3600, 7200, "1-2h"], [7200, 18000, "2-5h"], [18000, Infinity, "5h+"]];
+const RUNS_BANDS = [[0, 0, "no run finished"], [1, 1, "1 run"], [2, 2, "2 runs"], [3, 4, "3-4 runs"], [5, 9, "5-9 runs"], [10, 19, "10-19 runs"], [20, Infinity, "20+ runs"]];
+function renderPlayers(cur) {
+  const from = cur[0], to = cur[cur.length - 1];
+  // the players seen at any time in the range (their numbers are for their whole history, not only the range)
+  const all = Object.entries(summaryData.all.players || {}).map(([id, p]) => ({ id, ...p }));
+  const list = all.filter((p) => (p.last || "").slice(0, 10) >= from && (p.first || "").slice(0, 10) <= to).sort((a, b) => b.playtime - a.playtime);
+  const n = list.length, pct = (k) => (n ? Math.round(100 * k / n) + "%" : "");
+  renderBars("chart-playtime", n ? TIME_BANDS.map(([lo, hi, label]) => { const k = list.filter((p) => p.playtime >= lo && p.playtime < hi).length; return { label, segs: [{ v: k, c: "var(--s-runs)", title: `${k} player${k === 1 ? "" : "s"}` }], text: `${k} · ${pct(k)}` }; }) : [], { wideVal: true });
+  renderBars("chart-playerruns", n ? RUNS_BANDS.map(([lo, hi, label]) => { const k = list.filter((p) => p.runs >= lo && p.runs <= hi).length; return { label, segs: [{ v: k, c: "var(--s-players)", title: `${k} player${k === 1 ? "" : "s"}` }], text: `${k} · ${pct(k)}` }; }) : [], { wideVal: true });
+  const sorted = list.map((p) => p.playtime).sort((a, b) => a - b), median = n ? sorted[Math.floor((n - 1) / 2)] : 0, total = sorted.reduce((a, b) => a + b, 0);
+  $("players-sub").textContent = n ? `${n} seen in this range · median ${fmtSecs(median)} · ${fmtSecs(total)} played in all` : "none seen in this range";
+  const when = (t) => (t || "").replace("T", " ").slice(0, 16);
+  const rows = list.slice(0, 300).map((p) => `<tr><td class="mono" title="${escapeHtml(p.id)}">${escapeHtml(shortId(p.id))}</td><td>${fmtSecs(p.playtime)}</td><td>${p.runs}</td><td>${p.run || ""}</td><td>${p.deepest ? "L" + p.deepest : ""}</td><td>${escapeHtml(when(p.first))}</td><td>${escapeHtml(when(p.last))}</td><td>${escapeHtml(p.os || "")}</td><td>${p.version ? "v" + escapeHtml(p.version) : ""}</td></tr>`).join("");
+  $("players-table").innerHTML = n
+    ? `<table class="data"><thead><tr><th>player</th><th>played</th><th>runs finished</th><th>on run</th><th>deepest</th><th>first seen (UTC)</th><th>last seen (UTC)</th><th>os</th><th>version</th></tr></thead><tbody>${rows}</tbody></table>${n > 300 ? `<p class="note">the 300 who have played longest, of ${n}</p>` : ""}`
+    : '<div class="nodata">no players in this range.</div>';
+}
+
 function fmtShort(s) {
   if (s >= 5400) return (s / 3600).toFixed(1) + "h";
   if (s >= 60) return (s / 60).toFixed(1) + "m";
