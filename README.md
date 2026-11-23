@@ -9,7 +9,9 @@ how long runs are, how deep they go, which prestige nodes are bought, and what i
 - **Dashboard** (`docs/`): static HTML/JS served by GitHub Pages. It asks for the worker URL and token on load,
   fetches the rollup summary and the latest events, and draws:
   - activity over time (runs, players, errors);
-  - **how deep runs go**: finished runs by the deepest level they reached;
+  - **where runs end**: by deepest level, the runs that prestiged there and the runs that just stopped;
+  - **time to reach each level** and **fights lost on it**: the pacing curve, and where the wall is;
+  - **runs finished**: the share of runs begun that reached a prestige, by run number;
   - **depth, run length and tree size by run number**: a save's first run, its second, and so on;
   - **forge and weapons per run**: forged, equipped, scrapped, type and socket rerolls, upgrades;
   - **skills and crafting per run**: dropped, bought, salvaged, and each craft;
@@ -120,9 +122,9 @@ Every event is one JSON object on one line:
 
 ```json
 {
-  "type": "session_start" | "run_start" | "run_end" | "error",
+  "type": "session_start" | "run_start" | "progress" | "run_end" | "error",
   "game": "SMELTWORKS_IDLE",
-  "version": "0.84.0",
+  "version": "0.85.0",
   "install": "<random id, kept in the browser>",
   "session": "<random id, one per page load>",
   "run": "<random id, one per run, kept in the save>",
@@ -141,6 +143,13 @@ Every event is one JSON object on one line:
 - **run_start** (a run begins from the prestige tree): `{ n, deepest, cores, nodes: [ids], bought: [ids],
   dropped: [ids], playtime }`. `nodes` is everything held as the run begins; `bought` and `dropped` are what that
   visit to the tree changed (a node bought and unspecced in the same visit appears in neither).
+- **progress** (how far the run has got): `{ n, from, to, secs, levels: [[level, secs], ...], fails: { level: count } }`.
+  Not one per level: it goes with the game's two-minute post, when the page is left, and before a `run_end`, and
+  only if the run has reached a new level since the last one (or has lost fights and ten minutes have passed).
+  `from` and `to` are the deepest level as last reported and now (`from` is 0 the first time, which is sent as the
+  run begins); `levels` is each level reached since, with the run's game time when it was; `fails` the fights lost
+  since, by the level they were lost on. A run with a Head start begins at its first level: the levels it skipped
+  are never in `levels`.
 - **run_end** (prestige): `{ n, level, secs, kills, fails, cores, first, weapons, ups, skills, deepest, playtime,
   counts: { ... } }`
   - `level` is the deepest level the run reached, `secs` its length in game seconds, `fails` the fights it lost,
@@ -153,8 +162,12 @@ Every event is one JSON object on one line:
     before is summed like the rest and shown on the dashboard under its own name.
 - **error**: `{ message, stack }`, at most five per page load, with addresses cut down to file names.
 
-A run that is never ended (the player stops coming back) has a `run_start` and no `run_end`: it is counted as a
-run, and its depth is not known beyond the `level` of that save's last `session_start`.
+A run that is never ended (the player stops coming back) has a `run_start` and `progress` events and no
+`run_end`. The rollup counts every run once at the level it last reported (`open_at`: each `progress` adds one at
+`to` and takes one away at `from`); less the runs that prestiged at that level, that is the runs that stopped
+there. A run still being played looks the same as one that was abandoned until it ends, so the newest day or two
+of any range overstate the stops; and over a short range a level can come out negative (the run was there before
+the range began), which the dashboard shows as none.
 
 ### What the rollup keeps
 

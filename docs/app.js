@@ -186,6 +186,7 @@ function emptyMetrics() {
     run_starts: 0, run_ends: 0, new_deepest: 0, secs: 0, levels: 0, kills: 0, fails: 0, cores: 0, weapons: 0, ups: 0, skills: 0,
     ends_by_level: {}, ends_by_run: {}, secs_by_run: {}, level_by_run: {}, cores_by_run: {}, starts_by_run: {}, nodes_by_run: {},
     nodes_held: {}, nodes_bought: {}, nodes_dropped: {}, node_buy_run: {},
+    progress: 0, open_at: {}, reach_n: {}, reach_secs: {}, fails_by_level: {},
     counts: {}, os: {}, versions: {}, error_messages: {},
   };
 }
@@ -463,8 +464,10 @@ function runBands(counts) {
 const bandSum = (obj, band) => { let t = 0; for (let n = band.from; n <= band.to; n++) t += (obj && obj[n]) || 0; return t; };
 
 // Deepest levels in rows of one level, or of five or twenty-five once runs go deep.
-function levelBands(ends) {
-  const keys = Object.keys(ends || {}).map(Number).filter((n) => ends[n] > 0);
+function levelBands(...maps) {
+  const ends = {};
+  for (const m of maps) for (const [k, v] of Object.entries(m || {})) if (v > 0) ends[k] = (ends[k] || 0) + v;
+  const keys = Object.keys(ends).map(Number);
   if (!keys.length) return [];
   const max = Math.max(...keys), step = max <= 24 ? 1 : max <= 120 ? 5 : 25, out = [];
   for (let from = 1; from <= max; from += step) {
@@ -487,12 +490,32 @@ const CRAFT_ROWS = [
 function renderAggregates(t) {
   const runsTitle = (n) => `${n} run${n === 1 ? "" : "s"}`;
 
-  // how deep: one row per level (or band of levels), by how many runs ended there
-  const ends = t.ends_by_level || {};
-  renderBars("chart-depth", levelBands(ends).map((b) => {
-    const n = bandSum(ends, b);
-    return { label: b.label, segs: [{ v: n, c: "var(--s-runs)", title: `${runsTitle(n)} ended at ${b.label}` }], text: t.run_ends ? `${n} · ${Math.round(100 * n / t.run_ends)}%` : String(n) };
-  }), { wideVal: true });
+  // where runs end: one row per level (or band of levels). Prestiged there, or last heard from there with no prestige.
+  // open_at counts each run at the level it last reported; the ones that prestiged there are in ends_by_level.
+  const ends = t.ends_by_level || {}, open = t.open_at || {};
+  const levels = levelBands(ends, open, t.reach_n);
+  $("depth-legend").innerHTML =
+    `<span class="key"><i class="box" style="--c:var(--good)"></i>prestiged</span>` +
+    `<span class="key"><i class="box" style="--c:var(--critical)"></i>stopped</span>`;
+  const stoppedAt = (b) => { let n = 0; for (let l = b.from; l <= b.to; l++) n += Math.max(0, (open[l] || 0) - (ends[l] || 0)); return n; };
+  renderBars("chart-depth", levels.map((b) => {
+    const done = bandSum(ends, b), stop = stoppedAt(b);
+    return { label: b.label, segs: [
+      { v: done, c: "var(--good)", title: `${runsTitle(done)} prestiged at ${b.label}` },
+      { v: stop, c: "var(--critical)", title: `${runsTitle(stop)} stopped at ${b.label} without a prestige` },
+    ], text: `${done} · ${stop} stopped` };
+  }).filter((r) => r.segs[0].v || r.segs[1].v), { wideVal: true });
+
+  // pacing: how far into a run each level is first reached, and how many fights are lost on it
+  const reached = levels.map((b) => ({ ...b, n: bandSum(t.reach_n, b) })).filter((b) => b.n > 0);
+  renderBars("chart-reach", reached.map((b) => {
+    const secs = bandSum(t.reach_secs, b) / b.n;
+    return { label: b.label, segs: [{ v: secs, c: "var(--s-runs)", title: `${b.n} time${b.n === 1 ? "" : "s"} a run reached ${b.label}` }], text: fmtSecs(secs) };
+  }));
+  renderBars("chart-fails", reached.map((b) => {
+    const f = bandSum(t.fails_by_level, b), per = f / b.n;
+    return { label: b.label, segs: [{ v: per, c: "var(--critical)", title: `${f} fight${f === 1 ? "" : "s"} lost at ${b.label}, reached ${b.n} time${b.n === 1 ? "" : "s"}` }], text: per.toFixed(2) };
+  }));
 
   // by run number: how deep, how long, what it earned
   const bands = runBands(t.ends_by_run).map((b) => ({ ...b, n: bandSum(t.ends_by_run, b) })).filter((b) => b.n > 0);
@@ -504,6 +527,8 @@ function renderAggregates(t) {
     const secs = bandSum(t.secs_by_run, b) / b.n;
     return { label: b.label, segs: [{ v: secs, c: "var(--s-runs)", title: runsTitle(b.n) }], text: fmtSecs(secs) };
   }));
+  renderBars("chart-finished", runBands(t.starts_by_run).map((b) => ({ ...b, n: bandSum(t.starts_by_run, b), done: bandSum(t.ends_by_run, b) })).filter((b) => b.n > 0).map((b) => (
+    { label: b.label, segs: [{ v: Math.min(100, 100 * b.done / b.n), c: "var(--good)", title: `${b.done} of ${b.n} runs begun were finished` }], text: `${Math.min(100, Math.round(100 * b.done / b.n))}% · ${b.n}` })), { max: 100, wideVal: true });
   const starts = runBands(t.starts_by_run).map((b) => ({ ...b, n: bandSum(t.starts_by_run, b) })).filter((b) => b.n > 0);
   renderBars("chart-tree", starts.map((b) => {
     const nodes = bandSum(t.nodes_by_run, b) / b.n;
@@ -668,7 +693,8 @@ function renderFeed(events) {
 
 // evs newest-first. Classify a session from the latest thing it did.
 function runOutcome(evs) {
-  const last = evs.find((e) => e.type === "run_end" || e.type === "run_start");
+  const last = evs.find((e) => e.type === "run_end" || e.type === "run_start" || e.type === "progress");
+  if (last && last.type === "progress") return { text: `run ${last.data?.n ?? "?"} · at L${last.data?.to ?? "?"}`, c: "var(--s-runs)" };
   if (last && last.type === "run_end") return { text: `run ${last.data?.n ?? "?"} ended · L${last.data?.level ?? "?"}`, c: "var(--good)" };
   if (last) return { text: `run ${last.data?.n ?? "?"} begun`, c: "var(--s-runs)" };
   if (evs.some((e) => e.type === "error")) return { text: "error", c: "var(--critical)" };
@@ -681,6 +707,7 @@ function shortId(s) { return s.length > 12 ? s.slice(0, 8) : s; }
 function runCharacters(evs) {
   for (const e of evs) {
     const d = e.data || {};
+    if (e.type === "progress") continue;
     if (e.type === "run_end") return `deepest L${d.deepest ?? "?"} · ${fmtSecs(Number(d.playtime) || 0)} played`;
     if (e.type === "run_start") return `deepest L${d.deepest ?? "?"} · ${Array.isArray(d.nodes) ? d.nodes.length : "?"} nodes`;
     if (e.type === "session_start") return `run ${d.n ?? "?"} · L${d.level ?? "?"} · deepest L${d.deepest ?? "?"}`;
@@ -722,6 +749,7 @@ function eventCard(e) {
   const tags = [`<span class="tag tag-type">${escapeHtml(e.type || "?")}</span>`];
   if (e.data?.n != null && e.type !== "error") tags.push(`<span class="tag">run ${escapeHtml(e.data.n)}</span>`);
   if (e.type === "run_end" && e.data?.level != null) tags.push(`<span class="tag">L${escapeHtml(e.data.level)}</span>`);
+  if (e.type === "progress" && e.data?.to != null) tags.push(`<span class="tag">L${escapeHtml(e.data.to)}</span>`);
   if (e.type === "run_end" && e.data?.first) tags.push(`<span class="tag tag-cleared">new deepest</span>`);
   if (e.data?.fresh) tags.push(`<span class="tag">new save</span>`);
   if (e.os) tags.push(`<span class="tag">${escapeHtml(e.os)}</span>`);
@@ -729,7 +757,7 @@ function eventCard(e) {
   div.innerHTML = `<div class="event-head"><span class="time">${escapeHtml(time)}</span>${tags.join(" ")}</div>`;
   const body = document.createElement("div");
   if (e.type === "error") body.appendChild(renderCrashBody(e));
-  else if (e.type === "run_end" || e.type === "run_start" || e.type === "session_start") body.appendChild(renderRunBody(e));
+  else if (e.type === "run_end" || e.type === "run_start" || e.type === "session_start" || e.type === "progress") body.appendChild(renderRunBody(e));
   else body.innerHTML = `<pre class="raw">${escapeHtml(JSON.stringify(e.data || {}, null, 2))}</pre>`;
   div.appendChild(body);
   return div;
@@ -756,6 +784,12 @@ function renderRunBody(e) {
     if (d.kills != null) run.push(`${d.kills} kills`);
     if (d.fails != null) run.push(`${d.fails} lost fight${d.fails === 1 ? "" : "s"}`);
     if (d.cores != null) run.push(`${d.cores} cores earned`);
+  } else if (e.type === "progress") {
+    if (d.to != null) run.push(d.from && d.from !== d.to ? `level ${d.from} to ${d.to}` : `at level ${d.to}`);
+    if (d.secs != null) run.push(`${fmtSecs(Number(d.secs))} into the run`);
+    if (Array.isArray(d.levels) && d.levels.length) run.push(d.levels.filter((p) => Array.isArray(p)).map((p) => `L${p[0]} at ${fmtSecs(Number(p[1]) || 0)}`).join(", "));
+    const lost = d.fails && typeof d.fails === "object" ? Object.entries(d.fails).map(([l, n]) => `${n} on L${l}`).join(", ") : "";
+    if (lost) run.push(`fights lost: ${lost}`);
   } else if (e.type === "session_start") {
     if (d.level != null) run.push(`at level ${d.level}`);
     if (d.secs != null) run.push(`${fmtSecs(Number(d.secs))} into the run`);

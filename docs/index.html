@@ -67,8 +67,24 @@
     <!-- aggregate grid -->
     <section class="grid">
       <div class="panel">
-        <div class="panel-head"><h2>How deep runs go <span class="muted">runs by the deepest level they reached</span></h2></div>
+        <div class="panel-head">
+          <h2>Where runs end <span class="muted">by deepest level reached</span></h2>
+          <div class="legend" id="depth-legend"></div>
+        </div>
         <div id="chart-depth" class="bars"></div>
+        <p class="note">Stopped: last heard from at that level, with no prestige. A run still being played counts as stopped until it ends, so the newest day or two overstate it.</p>
+      </div>
+      <div class="panel">
+        <div class="panel-head"><h2>Time to reach <span class="muted">avg game time into the run when a level is first reached</span></h2></div>
+        <div id="chart-reach" class="bars"></div>
+      </div>
+      <div class="panel">
+        <div class="panel-head"><h2>Lost fights <span class="muted">per run that reached the level</span></h2></div>
+        <div id="chart-fails" class="bars"></div>
+      </div>
+      <div class="panel">
+        <div class="panel-head"><h2>Runs finished <span class="muted">share of runs begun that reached a prestige, by run number</span></h2></div>
+        <div id="chart-finished" class="bars"></div>
       </div>
       <div class="panel">
         <div class="panel-head"><h2>Depth by run <span class="muted">avg deepest level · avg cores earned</span></h2></div>
@@ -126,6 +142,7 @@
               <option value="">all</option>
               <option value="run_end">run_end</option>
               <option value="run_start">run_start</option>
+              <option value="progress">progress</option>
               <option value="session_start">session_start</option>
               <option value="error">error</option>
             </select>

@@ -99,7 +99,7 @@ test("rollup folds a day's runs: how long, how deep, which nodes, and what was d
 	assert.deepEqual(m.error_messages, { "TypeError: x is not a function": 1 }); assert.deepEqual(m.versions, { "0.84.0": m.events });
 	assert.equal(m.os.Windows, m.events); assert.equal(m.events, 10, "the other game's event and the broken line are not counted");
 	// the run played the day before lands on its own date, with nonsense clamped to nothing
-	assert.equal(prev.run_ends, 1); assert.equal(prev.run_starts, 1); assert.equal(prev.runs, 1); assert.equal(prev.secs, 0); assert.equal(prev.levels, 0); assert.equal(prev.fails, 0); assert.equal(prev.cores, 0); assert.ok(prev.kills <= 10_000_000);
+	assert.equal(prev.run_ends, 1); assert.equal(prev.run_starts, 1); assert.equal(prev.runs, 1); assert.equal(prev.secs, 0); assert.equal(prev.levels, 0); assert.equal(prev.fails, 0); assert.equal(prev.cores, 0); assert.equal(prev.kills, 0);
 	assert.deepEqual(prev.ends_by_level, {}); assert.deepEqual(prev.ends_by_run, {}); assert.deepEqual(prev.counts, { forged: 0, salvage: 2 });
 	assert.deepEqual(prev.nodes_held, { F1: 1 }, "ids are deduplicated, and anything that is not a plain short id is dropped"); assert.deepEqual(prev.nodes_bought, {}); assert.deepEqual(prev.nodes_dropped, {});
 	// rolling up again reads nothing new and changes nothing
@@ -142,4 +142,33 @@ test("an upload whose key sorts before the cursor is still folded: same millisec
 	const b1 = await roll(); assert.equal(b1.files_read, 38); assert.equal(b1.remaining, true);
 	const b2 = await roll(); assert.equal(b2.files_read, 22); assert.equal(b2.remaining, false); assert.equal(b2.complete, true);
 	assert.equal(await count(), 65); assert.equal((await roll()).files_read, 0);
+});
+
+test("progress: where runs stop without a prestige, when each level is reached, and where fights are lost", async () => {
+	const env = mkEnv(), day = "2025-03-05", at = { time: day + "T12:00:00Z" }, two = { ...at, install: "i2", session: "s2" };
+	const prog = (run, data, o = at) => ev("progress", { run, ...o }, { n: 1, secs: 0, levels: [], fails: {}, ...data });
+	const lines = [
+		// run a: begins at 1, gets to 4, loses fights there, and is never heard from again
+		prog("a", { from: 0, to: 1, levels: [[1, 0]] }),
+		prog("a", { from: 1, to: 4, secs: 300, levels: [[2, 60], [3, 150], [4, 290]], fails: { 3: 1 } }),
+		prog("a", { from: 4, to: 4, secs: 900, fails: { 4: 5 } }),      // no new level: only the fights lost
+		// run b: gets to 4 too, and prestiges there
+		prog("b", { from: 0, to: 1, levels: [[1, 0]] }, two),
+		prog("b", { from: 1, to: 4, secs: 400, levels: [[2, 100], [3, 250], [4, 390]], fails: { 4: 1 } }, two),
+		runEnd("b", 1, 4, { secs: 600 }, two),
+		// run c: a Head start, so it begins at 6 and never reached 1 to 5; it stops at 7
+		prog("c", { n: 9, from: 0, to: 6, levels: [[6, 0]] }, two),
+		prog("c", { n: 9, from: 6, to: 7, secs: 80, levels: [[7, 80]] }, two),
+		// nonsense
+		prog("d", { from: "x", to: -3, levels: [[0, 5], "no", [2.5, 1], [3, "soon"], [3, 1e12]], fails: { x: 2, 4: "many", 2: 1 } }),
+		prog("e", { to: 2, levels: "all of them", fails: [1, 2] }),
+	];
+	env.BUCKET.store.set(`events/${day}/10-00-00.000-a.ndjson`, lines.join("\n"));
+	await call(env, "/rollup?day=" + day, { method: "POST", headers: auth });
+	const m = (await (await call(env, "/summary", { headers: auth })).json()).all.days[day].dates[day];
+	assert.equal(m.progress, 9); assert.equal(m.runs, 5);
+	assert.deepEqual(m.open_at, { 1: 0, 4: 2, 6: 0, 7: 1, 2: 1 }, "each run once, at the level it was last heard from");
+	assert.deepEqual(m.ends_by_level, { 4: 1 }, "so one of the two runs at level 4 stopped there without a prestige");
+	assert.deepEqual(m.reach_n, { 1: 2, 2: 2, 3: 4, 4: 2, 6: 1, 7: 1 }); assert.deepEqual(m.reach_secs, { 1: 0, 2: 160, 3: 400, 4: 680, 6: 0, 7: 80 });
+	assert.deepEqual(m.fails_by_level, { 3: 1, 4: 6, 2: 1 });
 });

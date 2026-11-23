@@ -53,7 +53,7 @@ const CONCURRENCY = 6;
 // Bump when DateMetrics changes shape: stale day files are rebuilt from raw
 // events and every day in all.json is marked incomplete so the dashboard
 // re-rolls them.
-const SUMMARY_VERSION = 1;
+const SUMMARY_VERSION = 2;
 const ALL_KEY = "summary/all.json";
 
 function json(body: unknown, status = 200): Response {
@@ -247,6 +247,15 @@ export interface DateMetrics {
 	nodes_bought: Counts;      // node id -> times bought
 	nodes_dropped: Counts;     // node id -> times handed back (unspec)
 	node_buy_run: Counts;      // node id -> sum of the run number it was bought for (over nodes_bought: when it is bought)
+	progress: number;          // progress events (how far a run has got, sent every couple of minutes at most)
+	// Where runs are: level -> runs whose deepest level, as last reported, is that one. A progress event adds one at
+	// the level it has reached and takes one away at the level it last reported, so over a whole history each run
+	// is counted once, where it was last heard from. Less ends_by_level, that is the runs that stopped there
+	// without a prestige (or are still going). Over a short range it can be negative: the dashboard clamps it.
+	open_at: Counts;
+	reach_n: Counts;           // level -> runs that reached it (and said when)
+	reach_secs: Counts;        // level -> sum of the run's game time when it was reached
+	fails_by_level: Counts;    // level -> fights lost on it
 	counts: Counts;            // what was done in a run, summed from run_end data.counts: forged, scrapped, reroll_type, craft_add ...
 	os: Counts;
 	versions: Counts;
@@ -279,13 +288,15 @@ export function emptyMetrics(): DateMetrics {
 		run_starts: 0, run_ends: 0, new_deepest: 0, secs: 0, levels: 0, kills: 0, fails: 0, cores: 0, weapons: 0, ups: 0, skills: 0,
 		ends_by_level: {}, ends_by_run: {}, secs_by_run: {}, level_by_run: {}, cores_by_run: {}, starts_by_run: {}, nodes_by_run: {},
 		nodes_held: {}, nodes_bought: {}, nodes_dropped: {}, node_buy_run: {},
+		progress: 0, open_at: {}, reach_n: {}, reach_secs: {}, fails_by_level: {},
 		counts: {}, os: {}, versions: {}, error_messages: {},
 	};
 }
 
-// A finite number, or 0. Client data is untrusted: never let NaN or a string into a sum.
+// A finite number from 0 to max, or 0. Client data is untrusted: never let NaN, a string or an absurd value into
+// a sum (one made-up 1e99 clamped to the maximum would still wreck an average, so it counts for nothing instead).
 function num(v: unknown, max = 1e9): number {
-	return typeof v === "number" && Number.isFinite(v) ? Math.max(0, Math.min(max, v)) : 0;
+	return typeof v === "number" && Number.isFinite(v) && v >= 0 && v <= max ? v : 0;
 }
 
 // Runs are numbered from 1 on each save. Everything from the 60th on shares one bucket.
@@ -352,6 +363,21 @@ export function foldEvent(sum: DaySummary, e: any) {
 		for (const id of held) bump(m.nodes_held, id);
 		for (const id of nodeIds(d.bought)) { bump(m.nodes_bought, id); bump(m.node_buy_run, id, rn ?? 0); }
 		for (const id of nodeIds(d.dropped)) bump(m.nodes_dropped, id);
+	} else if (e.type === "progress") {
+		// how far the run has got: it moves from the level it last reported to the one it is on now
+		if (run && !sets.runs.includes(run)) sets.runs.push(run);
+		m.progress++;
+		const to = levelKey(d.to), from = levelKey(d.from);
+		if (to != null && to !== from) { bump(m.open_at, to); if (from != null) bump(m.open_at, from, -1); }
+		if (Array.isArray(d.levels)) {
+			for (const pair of d.levels.slice(0, 300)) {
+				const lv = Array.isArray(pair) ? levelKey(pair[0]) : null;
+				if (lv != null) { bump(m.reach_n, lv); bump(m.reach_secs, lv, num(pair[1], 2_592_000)); }
+			}
+		}
+		if (d.fails && typeof d.fails === "object" && !Array.isArray(d.fails)) {
+			for (const [k, v] of Object.entries(d.fails).slice(0, 100)) { const lv = levelKey(Number(k)); if (lv != null) bump(m.fails_by_level, lv, num(v, 10_000)); }
+		}
 	} else if (e.type === "run_end") {
 		if (run && !sets.runs.includes(run)) sets.runs.push(run);
 		const rn = runKey(d.n), lv = levelKey(d.level);
