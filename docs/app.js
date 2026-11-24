@@ -330,6 +330,7 @@ function renderActivity(cur) {
   const legend = $("activity-legend");
   legend.innerHTML = SERIES.map((s) => `<span class="key"><i style="--c:${s.color}"></i>${escapeHtml(s.label)}</span>`).join("");
   drawLineChart($("activity-chart"), activityRows, SERIES);
+  watchChart($("activity-chart"), () => { if (summaryData) drawLineChart($("activity-chart"), activityRows, SERIES); });
   renderActivityTable();
 }
 
@@ -348,11 +349,23 @@ function niceMax(v) {
   return 10 * p;
 }
 
+// The chart is drawn for the width its box has at that moment, so it is drawn again whenever that width changes: the
+// window resized, a scrollbar come or gone, or the box shown after being hidden (while the table was up it has no
+// width at all, and a chart drawn then was drawn for a guess: shown, it sat in the middle of a wider box, and the
+// last few days could not be reached with the pointer). watchChart sees to it; a box with no width is left until it has one.
+const chartWatch = new WeakMap();
+function watchChart(container, redraw) {
+  if (chartWatch.has(container) || typeof ResizeObserver === "undefined") return;
+  const ro = new ResizeObserver(() => { const w = container.clientWidth; if (w && w !== Number(container.dataset.drawnWidth || 0)) redraw(); });
+  ro.observe(container); chartWatch.set(container, ro);
+}
 function drawLineChart(container, rows, series) {
   container.innerHTML = "";
   container.classList.remove("hovering");
   $("tooltip").hidden = true;
-  const W = Math.max(320, container.clientWidth || 800);
+  container.dataset.drawnWidth = String(container.clientWidth || 0);
+  if (!container.clientWidth) return;      // not on show: drawn when it is (watchChart)
+  const W = Math.max(320, container.clientWidth);
   const H = container.clientHeight || 260;
   const M = { l: 40, r: 56, t: 12, b: 26 };
   const iw = W - M.l - M.r, ih = H - M.t - M.b;
@@ -441,8 +454,9 @@ function drawLineChart(container, rows, series) {
   };
   const hide = () => { container.classList.remove("hovering"); tip.hidden = true; };
   hit.addEventListener("pointermove", (ev) => {
-    const rect = svg.getBoundingClientRect();
-    const px = (ev.clientX - rect.left) * (W / rect.width);
+    // where the pointer is in the chart's own units, by the SVG's own transform: the drawing may be scaled or centred in
+    // its box (when the box is not the width it was drawn for), and measuring from the box's edge then named the wrong day
+    const m = svg.getScreenCTM(), px = m && m.a ? (ev.clientX - m.e) / m.a : ev.clientX - svg.getBoundingClientRect().left;
     const i = n === 1 ? 0 : Math.round(((px - M.l) / iw) * (n - 1));
     showAt(Math.max(0, Math.min(n - 1, i)), ev.clientX, ev.clientY);
   });
@@ -918,6 +932,8 @@ document.addEventListener("DOMContentLoaded", () => {
     const on = $("activity-table").hidden;
     $("activity-table").hidden = !on;
     $("activity-chart").hidden = on;
+    // back to the chart: if it was not drawn for the width it now has (the numbers came in while the table was up), draw it
+    const c = $("activity-chart"); if (!on && summaryData && c.clientWidth !== Number(c.dataset.drawnWidth || 0)) drawLineChart(c, activityRows, SERIES);
     ev.currentTarget.setAttribute("aria-pressed", String(on));
   });
 
