@@ -158,6 +158,11 @@ table.data { border-collapse: collapse; width: 100%; font-size: 12px; font-varia
 table.data th, table.data td { text-align: right; padding: 5px 10px; border-bottom: 1px solid var(--hairline); }
 table.data th:first-child, table.data td:first-child { text-align: left; font-family: var(--mono); }
 table.data th { color: var(--muted); font-weight: 500; }
+/* a heading that sorts its table: the one in force is marked, with an arrow for which way */
+table.data th.sortable { cursor: pointer; user-select: none; white-space: nowrap; }
+table.data th.sortable:hover, table.data th.sortable:focus-visible { color: var(--ink); }
+table.data th.sortable.sorted { color: var(--ink); }
+table.data th.sortable .arrow { display: inline-block; width: 1em; font-size: 9px; text-align: right; }
 
 /* ---------- bar charts ---------- */
 .bars { display: flex; flex-direction: column; gap: 5px; }

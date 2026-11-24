@@ -123,7 +123,7 @@ async function refresh() {
     $("content").hidden = false;
     await refreshFeed();
     const n = Object.keys(dates).length;
-    setStatus(`${n} day${n === 1 ? "" : "s"} of history · updated ${new Date().toLocaleTimeString()}` +
+    setStatus(`${n} day${n === 1 ? "" : "s"} of history · updated ${zoneTime(new Date().toISOString(), true).slice(11)} ${ZONE_NAME} time` +
       (backfillPending ? " · older days still rolling up — refresh again" : ""));
   } catch (e) {
     setStatus(e.message, true);
@@ -590,11 +590,57 @@ function renderPlayers(cur) {
   renderBars("chart-playerruns", n ? RUNS_BANDS.map(([lo, hi, label]) => { const k = list.filter((p) => p.runs >= lo && p.runs <= hi).length; return { label, segs: [{ v: k, c: "var(--s-players)", title: `${k} player${k === 1 ? "" : "s"}` }], text: `${k} · ${pct(k)}` }; }) : [], { wideVal: true });
   const sorted = list.map((p) => p.playtime).sort((a, b) => a - b), median = n ? sorted[Math.floor((n - 1) / 2)] : 0, total = sorted.reduce((a, b) => a + b, 0);
   $("players-sub").textContent = n ? `${n} seen in this range · median ${fmtSecs(median)} · ${fmtSecs(total)} played in all` : "none seen in this range";
-  const when = (t) => (t || "").replace("T", " ").slice(0, 16);
-  const rows = list.slice(0, 300).map((p) => `<tr><td class="mono" title="${escapeHtml(p.id)}">${escapeHtml(shortId(p.id))}</td><td>${fmtSecs(p.playtime)}</td><td>${p.runs}</td><td>${p.run || ""}</td><td>${p.deepest ? "L" + p.deepest : ""}</td><td>${escapeHtml(when(p.first))}</td><td>${escapeHtml(when(p.last))}</td><td>${escapeHtml(p.os || "")}</td><td>${p.version ? "v" + escapeHtml(p.version) : ""}</td></tr>`).join("");
-  $("players-table").innerHTML = n
-    ? `<table class="data"><thead><tr><th>player</th><th>played</th><th>runs finished</th><th>on run</th><th>deepest</th><th>first seen (UTC)</th><th>last seen (UTC)</th><th>os</th><th>version</th></tr></thead><tbody>${rows}</tbody></table>${n > 300 ? `<p class="note">the 300 who have played longest, of ${n}</p>` : ""}`
-    : '<div class="nodata">no players in this range.</div>';
+  playerList = list;
+  drawPlayerTable();
+}
+
+// Times are shown in Winnipeg time (they are stored, and sorted, as UTC). The days the numbers are gathered into
+// are still UTC days: that is how the worker keeps them, so a day here begins in the evening, Winnipeg time.
+const ZONE = "America/Winnipeg", ZONE_NAME = "Winnipeg";
+const zoneFmt = new Intl.DateTimeFormat("en-CA", { timeZone: ZONE, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23" });
+function zoneTime(iso, seconds) {
+  const d = new Date(iso || NaN); if (isNaN(d)) return "";
+  const o = {}; for (const x of zoneFmt.formatToParts(d)) o[x.type] = x.value;
+  return `${o.year}-${o.month}-${o.day} ${o.hour}:${o.minute}${seconds ? ":" + o.second : ""}`;
+}
+// The table of players: any column sorts it. A click on a heading sorts by that column (numbers and dates from the
+// top down first, text from A), and a second click turns it over. The choice is kept while the page is open.
+const PLAYER_COLS = [
+  { key: "id", label: "player", text: true },
+  { key: "playtime", label: "played" },
+  { key: "runs", label: "runs finished" },
+  { key: "run", label: "on run" },
+  { key: "deepest", label: "deepest" },
+  { key: "first", label: `first seen (${ZONE_NAME})`, text: true, desc: true },
+  { key: "last", label: `last seen (${ZONE_NAME})`, text: true, desc: true },
+  { key: "os", label: "os", text: true },
+  { key: "version", label: "version", version: true, desc: true },
+];
+let playerList = [], playerSort = { key: "playtime", desc: true };
+const versionKey = (v) => String(v || "").split(".").map((x) => String(parseInt(x, 10) || 0).padStart(6, "0")).join(".");
+function sortPlayers(list, sort) {
+  const col = PLAYER_COLS.find((c) => c.key === sort.key) || PLAYER_COLS[1];
+  const val = (p) => (col.version ? versionKey(p.version) : col.text ? String(p[col.key] || "").toLowerCase() : Number(p[col.key]) || 0);
+  const empty = (p) => p[col.key] == null || p[col.key] === "";
+  return list.slice().sort((a, b) => {
+    if (empty(a) !== empty(b)) return empty(a) ? 1 : -1;      // a player with nothing in the column goes last, whichever way it is sorted
+    const x = val(a), y = val(b), d = x < y ? -1 : x > y ? 1 : 0;
+    return (sort.desc ? -d : d) || b.playtime - a.playtime;
+  });
+}
+function drawPlayerTable() {
+  const n = playerList.length, el = $("players-table");
+  if (!n) { el.innerHTML = '<div class="nodata">no players in this range.</div>'; return; }
+  const when = (t) => zoneTime(t);
+  const col = PLAYER_COLS.find((c) => c.key === playerSort.key) || PLAYER_COLS[1];
+  const rows = sortPlayers(playerList, playerSort).slice(0, 300).map((p) => `<tr><td class="mono" title="${escapeHtml(p.id)}">${escapeHtml(shortId(p.id))}</td><td>${fmtSecs(p.playtime)}</td><td>${p.runs}</td><td>${p.run || ""}</td><td>${p.deepest ? "L" + p.deepest : ""}</td><td>${escapeHtml(when(p.first))}</td><td>${escapeHtml(when(p.last))}</td><td>${escapeHtml(p.os || "")}</td><td>${p.version ? "v" + escapeHtml(p.version) : ""}</td></tr>`).join("");
+  const heads = PLAYER_COLS.map((c) => { const on = c.key === playerSort.key; return `<th class="sortable${on ? " sorted" : ""}" data-sort="${c.key}" tabindex="0" role="button" aria-sort="${on ? (playerSort.desc ? "descending" : "ascending") : "none"}" title="Sort by ${c.label}">${c.label}<span class="arrow">${on ? (playerSort.desc ? "▼" : "▲") : ""}</span></th>`; }).join("");
+  el.innerHTML = `<table class="data"><thead><tr>${heads}</tr></thead><tbody>${rows}</tbody></table>${n > 300 ? `<p class="note">the first 300 by ${col.label}, of ${n}</p>` : ""}`;
+  el.querySelectorAll("th.sortable").forEach((th) => {
+    const go = () => { const c = PLAYER_COLS.find((x) => x.key === th.dataset.sort); playerSort = playerSort.key === c.key ? { key: c.key, desc: !playerSort.desc } : { key: c.key, desc: c.text ? !!c.desc : true }; drawPlayerTable(); const again = el.querySelector(`th[data-sort="${c.key}"]`); if (again && document.activeElement === document.body) again.focus(); };
+    th.addEventListener("click", go);
+    th.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); go(); } });
+  });
 }
 
 function fmtShort(s) {
@@ -744,7 +790,7 @@ function runGroup(r) {
   const ended = r.evs.filter((e) => e.type === "run_end").length, begun = r.evs.filter((e) => e.type === "run_start").length;
   const errs = r.evs.filter((e) => e.type === "error").length;
   const countTxt = [ended && `${ended} run${ended === 1 ? "" : "s"} finished`, begun && `${begun} begun`, errs && `${errs} error${errs === 1 ? "" : "s"}`].filter(Boolean).join(" · ") || "no runs finished";
-  const last = (r.lastTime || "").replace("T", " ").replace(/\.\d+Z$|Z$/, "");
+  const last = zoneTime(r.lastTime, true);
   const sum = document.createElement("summary");
   sum.innerHTML = `
     <span class="run-outcome" style="--c:${r.outcome.c}">${escapeHtml(r.outcome.text)}</span>
@@ -767,7 +813,7 @@ function runGroup(r) {
 function eventCard(e) {
   const div = document.createElement("div");
   div.className = "event event-" + (e.type || "unknown");
-  const time = (e.time || "").replace("T", " ").replace(/\.\d+Z$|Z$/, "");
+  const time = zoneTime(e.time, true);
   const tags = [`<span class="tag tag-type">${escapeHtml(e.type || "?")}</span>`];
   if (e.data?.n != null && e.type !== "error") tags.push(`<span class="tag">run ${escapeHtml(e.data.n)}</span>`);
   if (e.type === "run_end" && e.data?.level != null) tags.push(`<span class="tag">L${escapeHtml(e.data.level)}</span>`);
