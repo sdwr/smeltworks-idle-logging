@@ -582,7 +582,7 @@ function levelBands(...maps) {
 
 const FORGE_ROWS = [
   ["forged", "forged"], ["equipped", "equipped"], ["scrapped", "scrapped"],
-  ["reroll_type", "type rerolls"], ["reroll_sockets", "socket rerolls"], ["upgrade", "upgrades"], ["upgrade_ranks", "upgrade ranks"],
+  ["reroll_type", "type rerolls"], ["reroll_sockets", "socket rerolls"], ["upgrade", "weapon upgrades"], ["upgrade_ranks", "weapon upgrade ranks"], ["cursor_up", "cursor upgrades"], ["cursor_ranks", "cursor upgrade ranks"],
   ["tailwind", "fights skipped (Tailwind)"],
 ];
 const CRAFT_ROWS = [
