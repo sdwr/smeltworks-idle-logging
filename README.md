@@ -229,3 +229,19 @@ If the worker breaks, the files are still there:
 npx wrangler r2 object list smeltworks-idle-logging --prefix events/2026-11-23/
 npx wrangler r2 object get smeltworks-idle-logging/events/2026-11-23/<key>.ndjson
 ```
+
+## A window on the timeline, and marks
+
+The range buttons at the top (7d, 30d, 90d, all) set how much of the timeline the Activity chart shows. Under them is
+the **window**: drag across the chart, or pick two dates, and every number on the page (the tiles, the bar charts, the
+player list) is for those days only, with the window shaded on the chart. The tiles then compare it with the same number
+of days just before. Clear puts it back.
+
+**Marks** are dates worth remembering, a launch post say. Add one with its date and a name and it is drawn on the chart
+as a dashed line. Click a mark and the window becomes the days from that mark to the day before the next one (or to
+today), compared with the same number of days after the mark before it: the first days after one post against the
+first days after the last. The Players heading says how many players were first seen in the window and how many of
+those were seen again on a later day, and the same for the days it is compared with.
+
+The window and the marks are kept in this browser only. Days are UTC days, as the worker keeps them, so a post made in
+the evening in North America lands on the next day's column.

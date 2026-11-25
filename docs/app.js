@@ -10,6 +10,8 @@
 const LS_URL = "smeltworks-idle.worker_url";
 const LS_TOKEN = "smeltworks-idle.token";
 const LS_RANGE = "smeltworks-idle.range";
+const LS_PICK = "smeltworks-idle.window";
+const LS_MARKS = "smeltworks-idle.marks";
 
 // Default worker URL — not a secret (it's in the game's source). Saved
 // localStorage value still takes precedence if the user changed it.
@@ -32,8 +34,18 @@ const $ = (id) => document.getElementById(id);
 let summaryData = null;   // { today, days, all }
 let dates = {};           // event-date -> merged metrics
 let rangeDays = Number(localStorage.getItem(LS_RANGE) || 30);
+// A window picked out of the timeline: every number below the activity chart is for these days only. { from, to, cmp?: { from, to, label } }
+// (cmp: the days it is compared with; without one, the days just before it.) And the marks put on the timeline, a launch post say: [{ date, label }].
+const loadJSON = (k, d) => { try { const v = JSON.parse(localStorage.getItem(k) || "null"); return v == null ? d : v; } catch { return d; } };
+let pick = loadJSON(LS_PICK, null);
+let marks = loadJSON(LS_MARKS, []);
+const ISO = /^\d{4}-\d{2}-\d{2}$/;
+if (!pick || !ISO.test(pick.from || "") || !ISO.test(pick.to || "")) pick = null;
+if (!Array.isArray(marks)) marks = [];
+marks = marks.filter((m) => m && ISO.test(m.date || ""));
 let feedEvents = [];      // last fetched raw events (for client-side re-sort)
 let activityRows = [];    // rows behind the activity chart (for the table view)
+let activityOpts = {};    // the window, the marks and the drag handler drawn over it
 let backfillPending = false; // true when a refresh hit the rollup budget
 let feedLimit = FEED_PAGE;
 
@@ -218,16 +230,58 @@ function fmt(n) {
   return String(Math.round(n));
 }
 
-// The current period, and the equal-length period before it (for deltas).
+// The days on show (view: the range chosen at the top), the days the numbers are for (cur: the window picked out of
+// them, or all of them), and the days those are compared with (prev: the window's own comparison, or the same number
+// of days just before).
 function periods() {
   const today = summaryData.today;
   const known = Object.keys(dates).sort();
   let from;
   if (rangeDays > 0) from = addDays(today, -(rangeDays - 1));
   else from = known[0] || today;
-  const cur = dateSpan(from, today);
-  const prev = rangeDays > 0 ? dateSpan(addDays(from, -rangeDays), addDays(from, -1)) : [];
-  return { cur, prev };
+  if (!pick) {
+    const cur = dateSpan(from, today);
+    return { view: cur, cur, prev: rangeDays > 0 ? dateSpan(addDays(from, -rangeDays), addDays(from, -1)) : [], prevLabel: "" };
+  }
+  const a = pick.from, b = pick.to > today ? today : pick.to, cur = dateSpan(a, b < a ? a : b);
+  if (a < from) from = a;      // a window from before the range on show: the chart reaches back to it
+  const c = pick.cmp;
+  const prev = c ? dateSpan(c.from, c.to) : dateSpan(addDays(a, -cur.length), addDays(a, -1));
+  return { view: dateSpan(from, today), cur, prev, prevLabel: c ? spanText(prev) + (c.label ? ` (${c.label})` : "") : "" };
+}
+function spanText(days) { return days.length > 1 ? `${shortDate(days[0])} – ${shortDate(days[days.length - 1])}` : shortDate(days[0]); }
+
+// ---- the window, and the marks on the timeline ----
+function setPick(p) {
+  pick = p;
+  if (p) localStorage.setItem(LS_PICK, JSON.stringify(p)); else localStorage.removeItem(LS_PICK);
+  if (summaryData) renderHistory();
+}
+function saveMarks() { marks.sort((x, y) => (x.date < y.date ? -1 : x.date > y.date ? 1 : 0)); localStorage.setItem(LS_MARKS, JSON.stringify(marks)); }
+// From a mark to the day before the next one (or to today), compared with the same number of days after the mark before it:
+// the first days after one launch post against the first days after the last.
+function pickMark(i) {
+  const today = summaryData.today, m = marks[i], next = marks[i + 1], before = marks[i - 1];
+  let to = next ? addDays(next.date, -1) : today; if (to > today) to = today; if (to < m.date) to = m.date;
+  const len = dateSpan(m.date, to).length;
+  setPick({ from: m.date, to, cmp: before ? { from: before.date, to: addDays(before.date, len - 1), label: `first ${len} day${len === 1 ? "" : "s"} after ${before.label || shortDate(before.date)}` } : undefined });
+}
+function renderWindow(cur, prev, prevLabel) {
+  $("win-from").value = pick ? pick.from : ""; $("win-to").value = pick ? pick.to : "";
+  $("win-clear").hidden = !pick;
+  $("window").classList.toggle("on", !!pick);
+  $("win-sub").textContent = pick
+    ? `${spanText(cur)} · ${cur.length} day${cur.length === 1 ? "" : "s"} · every number below is for these days · compared with ${prevLabel || "the " + prev.length + " day" + (prev.length === 1 ? "" : "s") + " before"}`
+    : "drag across the chart, or pick dates, to see the numbers for part of the timeline only";
+  const el = $("marks"); el.innerHTML = "";
+  marks.forEach((m, i) => {
+    const b = document.createElement("button"); b.className = "mark" + (pick && pick.from === m.date ? " active" : ""); b.type = "button";
+    b.title = "the numbers from this mark to the next (or to today), compared with the same number of days after the mark before";
+    b.textContent = `${m.label || "mark"} · ${shortDate(m.date)}`; b.addEventListener("click", () => pickMark(i));
+    const x = document.createElement("button"); x.className = "mark-x"; x.type = "button"; x.title = "remove this mark"; x.textContent = "×";
+    x.addEventListener("click", () => { marks.splice(i, 1); saveMarks(); if (summaryData) renderHistory(); });
+    const w = document.createElement("span"); w.className = "mark-wrap"; w.append(b, x); el.appendChild(w);
+  });
 }
 
 function sumMetrics(dayList) {
@@ -248,19 +302,20 @@ function sumMetrics(dayList) {
 // ============================================================
 
 function renderHistory() {
-  const { cur, prev } = periods();
+  const { view, cur, prev, prevLabel } = periods();
   const curTotals = sumMetrics(cur);
   const prevTotals = prev.length ? sumMetrics(prev) : null;
-  renderTiles(cur, curTotals, prevTotals);
-  renderActivity(cur);
+  renderWindow(cur, prev, prevLabel);
+  renderTiles(cur, curTotals, prevTotals, prevLabel || (prev.length ? `previous ${prev.length} days` : ""));
+  renderActivity(view, cur);
   renderAggregates(curTotals);
-  renderPlayers(cur);
-  $("activity-sub").textContent = rangeDays > 0
+  renderPlayers(cur, prev.length && pick ? prev : null);
+  $("activity-sub").textContent = (rangeDays > 0 && view.length === rangeDays
     ? `last ${rangeDays} days · per day`
-    : `${shortDate(cur[0])} – ${shortDate(cur[cur.length - 1])} · per day`;
+    : `${shortDate(view[0])} – ${shortDate(view[view.length - 1])} · per day`) + (pick ? ` · window ${spanText(cur)}` : "");
 }
 
-function renderTiles(cur, t, p) {
+function renderTiles(cur, t, p, vs) {
   const per = (sum, n) => (n ? sum / n : 0);
   const defs = [
     { key: "runs", label: "runs", good: "up" },
@@ -288,7 +343,7 @@ function renderTiles(cur, t, p) {
       if (diff !== 0 && d.good) cls = (diff > 0) === (d.good === "up") ? "up" : "down";
       const pct = pv > 0 ? ` (${diff > 0 ? "+" : ""}${Math.round(100 * diff / pv)}%)` : "";
       const txt = show(Math.abs(diff)) === show(0) ? "no change" : `${diff > 0 ? "+" : "-"}${show(Math.abs(diff))}${pct}`;
-      deltaHtml = `<span class="delta ${cls}" title="vs previous ${cur.length} days">${txt}</span>`;
+      deltaHtml = `<span class="delta ${cls}" title="vs ${escapeHtml(vs)}: ${show(pv)}">${txt}</span>`;
     } else {
       deltaHtml = `<span class="delta">all time</span>`;
     }
@@ -320,8 +375,8 @@ function sparkline(values) {
 }
 
 // ---- activity line chart ----
-function renderActivity(cur) {
-  activityRows = cur.map((d) => {
+function renderActivity(view, cur) {
+  activityRows = view.map((d) => {
     const m = dates[d] || {};
     const row = { date: d };
     for (const s of SERIES) row[s.key] = m[s.key] || 0;
@@ -329,8 +384,15 @@ function renderActivity(cur) {
   });
   const legend = $("activity-legend");
   legend.innerHTML = SERIES.map((s) => `<span class="key"><i style="--c:${s.color}"></i>${escapeHtml(s.label)}</span>`).join("");
-  drawLineChart($("activity-chart"), activityRows, SERIES);
-  watchChart($("activity-chart"), () => { if (summaryData) drawLineChart($("activity-chart"), activityRows, SERIES); });
+  // what is drawn over the lines: the window (if one is picked), each mark that falls in view, and what a drag across it does
+  const at = (d) => view.indexOf(d);
+  activityOpts = {
+    sel: pick ? [Math.max(0, at(cur[0])), at(cur[cur.length - 1])] : null,
+    marks: marks.map((m) => ({ i: at(m.date), label: m.label || "mark" })).filter((m) => m.i >= 0),
+    onSelect: (i0, i1) => setPick({ from: view[i0], to: view[i1] }),
+  };
+  drawLineChart($("activity-chart"), activityRows, SERIES, activityOpts);
+  watchChart($("activity-chart"), () => { if (summaryData) drawLineChart($("activity-chart"), activityRows, SERIES, activityOpts); });
   renderActivityTable();
 }
 
@@ -359,7 +421,7 @@ function watchChart(container, redraw) {
   const ro = new ResizeObserver(() => { const w = container.clientWidth; if (w && w !== Number(container.dataset.drawnWidth || 0)) redraw(); });
   ro.observe(container); chartWatch.set(container, ro);
 }
-function drawLineChart(container, rows, series) {
+function drawLineChart(container, rows, series, opts = {}) {
   container.innerHTML = "";
   container.classList.remove("hovering");
   $("tooltip").hidden = true;
@@ -398,6 +460,14 @@ function drawLineChart(container, rows, series) {
   for (let i = 0; i < n; i += step) {
     const t = el("text", { x: x(i), y: H - 8, "text-anchor": i === 0 ? "start" : "middle" }, axis);
     t.textContent = shortDate(rows[i].date);
+  }
+
+  // the window picked out of the timeline, behind the lines; and the marks, each a line with its name
+  const half = n > 1 ? iw / (n - 1) / 2 : iw / 2, edge = (i, side) => Math.max(M.l, Math.min(M.l + iw, x(i) + side * half));
+  if (opts.sel && opts.sel[1] >= 0) el("rect", { class: "window", x: edge(opts.sel[0], -1), y: M.t, width: Math.max(2, edge(opts.sel[1], 1) - edge(opts.sel[0], -1)), height: ih }, svg);
+  for (const m of opts.marks || []) {
+    el("line", { class: "mark", x1: x(m.i), x2: x(m.i), y1: M.t, y2: M.t + ih }, svg);
+    const t = el("text", { class: "mark-label", x: x(m.i) + (m.i > n * 0.8 ? -5 : 5), y: M.t + 11, "text-anchor": m.i > n * 0.8 ? "end" : "start" }, svg); t.textContent = m.label;
   }
 
   // series
@@ -453,14 +523,31 @@ function drawLineChart(container, rows, series) {
     tip.style.left = left + "px"; tip.style.top = top + "px";
   };
   const hide = () => { container.classList.remove("hovering"); tip.hidden = true; };
-  hit.addEventListener("pointermove", (ev) => {
-    // where the pointer is in the chart's own units, by the SVG's own transform: the drawing may be scaled or centred in
-    // its box (when the box is not the width it was drawn for), and measuring from the box's edge then named the wrong day
+  // where the pointer is in the chart's own units, by the SVG's own transform: the drawing may be scaled or centred in
+  // its box (when the box is not the width it was drawn for), and measuring from the box's edge then named the wrong day
+  const dayAt = (ev) => {
     const m = svg.getScreenCTM(), px = m && m.a ? (ev.clientX - m.e) / m.a : ev.clientX - svg.getBoundingClientRect().left;
-    const i = n === 1 ? 0 : Math.round(((px - M.l) / iw) * (n - 1));
-    showAt(Math.max(0, Math.min(n - 1, i)), ev.clientX, ev.clientY);
+    return Math.max(0, Math.min(n - 1, n === 1 ? 0 : Math.round(((px - M.l) / iw) * (n - 1))));
+  };
+  // a drag across the chart picks those days out as the window (a click alone does nothing: it is too easy to do by mistake)
+  let drag = null; const band = opts.onSelect ? el("rect", { class: "window drag", x: 0, y: M.t, width: 0, height: ih, visibility: "hidden" }, svg) : null;
+  if (band) svg.insertBefore(band, hit);
+  hit.addEventListener("pointermove", (ev) => {
+    const i = dayAt(ev);
+    if (drag) {
+      if (Math.abs(ev.clientX - drag.x0) > 4) drag.moved = true;
+      const lo = Math.min(drag.i0, i), hi = Math.max(drag.i0, i);
+      if (drag.moved) { band.setAttribute("visibility", "visible"); band.setAttribute("x", edge(lo, -1)); band.setAttribute("width", Math.max(2, edge(hi, 1) - edge(lo, -1))); }
+    }
+    showAt(i, ev.clientX, ev.clientY);
   });
-  hit.addEventListener("pointerleave", hide);
+  if (band) {
+    hit.style.cursor = "crosshair";
+    hit.addEventListener("pointerdown", (ev) => { if (ev.button !== 0) return; drag = { i0: dayAt(ev), x0: ev.clientX, moved: false }; try { hit.setPointerCapture(ev.pointerId); } catch { /* not every pointer can be held */ } ev.preventDefault(); });
+    const done = (ev) => { const d = drag; drag = null; band.setAttribute("visibility", "hidden"); if (d && d.moved && ev.type === "pointerup") { const i = dayAt(ev); opts.onSelect(Math.min(d.i0, i), Math.max(d.i0, i)); } };
+    hit.addEventListener("pointerup", done); hit.addEventListener("pointercancel", done);
+  }
+  hit.addEventListener("pointerleave", () => { if (!drag) hide(); });
   container.appendChild(svg);
 }
 
@@ -594,7 +681,7 @@ function renderAggregates(t) {
 // ---- players: one row per browser, from the worker's per-player records ----
 const TIME_BANDS = [[0, 60, "under 1m"], [60, 300, "1-5m"], [300, 900, "5-15m"], [900, 1800, "15-30m"], [1800, 3600, "30-60m"], [3600, 7200, "1-2h"], [7200, 18000, "2-5h"], [18000, Infinity, "5h+"]];
 const RUNS_BANDS = [[0, 0, "no run finished"], [1, 1, "1 run"], [2, 2, "2 runs"], [3, 4, "3-4 runs"], [5, 9, "5-9 runs"], [10, 19, "10-19 runs"], [20, Infinity, "20+ runs"]];
-function renderPlayers(cur) {
+function renderPlayers(cur, cmp) {
   const from = cur[0], to = cur[cur.length - 1];
   // the players seen at any time in the range (their numbers are for their whole history, not only the range)
   const all = Object.entries(summaryData.all.players || {}).map(([id, p]) => ({ id, ...p }));
@@ -603,7 +690,11 @@ function renderPlayers(cur) {
   renderBars("chart-playtime", n ? TIME_BANDS.map(([lo, hi, label]) => { const k = list.filter((p) => p.playtime >= lo && p.playtime < hi).length; return { label, segs: [{ v: k, c: "var(--s-runs)", title: `${k} player${k === 1 ? "" : "s"}` }], text: `${k} · ${pct(k)}` }; }) : [], { wideVal: true });
   renderBars("chart-playerruns", n ? RUNS_BANDS.map(([lo, hi, label]) => { const k = list.filter((p) => p.runs >= lo && p.runs <= hi).length; return { label, segs: [{ v: k, c: "var(--s-players)", title: `${k} player${k === 1 ? "" : "s"}` }], text: `${k} · ${pct(k)}` }; }) : [], { wideVal: true });
   const sorted = list.map((p) => p.playtime).sort((a, b) => a - b), median = n ? sorted[Math.floor((n - 1) / 2)] : 0, total = sorted.reduce((a, b) => a + b, 0);
-  $("players-sub").textContent = n ? `${n} seen in this range · median ${fmtSecs(median)} · ${fmtSecs(total)} played in all` : "none seen in this range";
+  // those first seen in these days, and how many of them were seen again on a later day: what a launch brought, and what it kept
+  const cohort = (a, b) => { const fresh = all.filter((p) => { const f = (p.first || "").slice(0, 10); return f >= a && f <= b; }), back = fresh.filter((p) => (p.last || "").slice(0, 10) > (p.first || "").slice(0, 10)).length;
+    return `${fresh.length} new, ${back} of them back on a later day${fresh.length ? " (" + Math.round(100 * back / fresh.length) + "%)" : ""}`; };
+  $("players-sub").textContent = (n ? `${n} seen in this range · median ${fmtSecs(median)} · ${fmtSecs(total)} played in all` : "none seen in this range")
+    + ` · ${cohort(from, to)}` + (cmp ? ` · compared days: ${cohort(cmp[0], cmp[cmp.length - 1])}` : "");
   playerList = list;
   drawPlayerTable();
 }
@@ -919,6 +1010,16 @@ document.addEventListener("DOMContentLoaded", () => {
       if (summaryData) renderHistory();
     });
   }
+  // the window: by its two dates, or cleared; and the marks
+  const fromDates = () => { let a = $("win-from").value, b = $("win-to").value; if (!ISO.test(a) && !ISO.test(b)) return; if (!ISO.test(a)) a = b; if (!ISO.test(b)) b = a; if (b < a) [a, b] = [b, a]; setPick({ from: a, to: b }); };
+  $("win-from").addEventListener("change", fromDates); $("win-to").addEventListener("change", fromDates);
+  $("win-clear").addEventListener("click", () => setPick(null));
+  $("mark-add").addEventListener("click", () => {
+    const d = $("mark-date").value; if (!ISO.test(d)) { $("mark-date").focus(); return; }
+    marks = marks.filter((m) => m.date !== d); marks.push({ date: d, label: $("mark-label").value.trim().slice(0, 40) }); saveMarks();
+    $("mark-label").value = ""; if (summaryData) renderHistory();
+  });
+  $("mark-label").addEventListener("keydown", (ev) => { if (ev.key === "Enter") $("mark-add").click(); });
   $("refresh").addEventListener("click", () => { populateDaysSafe(); refresh(); });
   $("save").addEventListener("click", () => { saveCreds(); toggleSettings(false); refresh(); });
   $("logout").addEventListener("click", clearCreds);
@@ -933,14 +1034,14 @@ document.addEventListener("DOMContentLoaded", () => {
     $("activity-table").hidden = !on;
     $("activity-chart").hidden = on;
     // back to the chart: if it was not drawn for the width it now has (the numbers came in while the table was up), draw it
-    const c = $("activity-chart"); if (!on && summaryData && c.clientWidth !== Number(c.dataset.drawnWidth || 0)) drawLineChart(c, activityRows, SERIES);
+    const c = $("activity-chart"); if (!on && summaryData && c.clientWidth !== Number(c.dataset.drawnWidth || 0)) drawLineChart(c, activityRows, SERIES, activityOpts);
     ev.currentTarget.setAttribute("aria-pressed", String(on));
   });
 
   let resizeTimer;
   window.addEventListener("resize", () => {
     clearTimeout(resizeTimer);
-    resizeTimer = setTimeout(() => { if (summaryData && !$("activity-chart").hidden) drawLineChart($("activity-chart"), activityRows, SERIES); }, 120);
+    resizeTimer = setTimeout(() => { if (summaryData && !$("activity-chart").hidden) drawLineChart($("activity-chart"), activityRows, SERIES, activityOpts); }, 120);
   });
 
   if (hasCreds()) refresh().then(populateDaysSafe);

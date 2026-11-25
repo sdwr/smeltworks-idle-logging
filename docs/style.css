@@ -256,3 +256,21 @@ details.collapsible[open] > summary::before { content: "▾ "; }
   .run > summary { grid-template-columns: 1fr; }
   .settings input { min-width: 0; width: 100%; }
 }
+
+/* the window on the timeline: the days the numbers are for, and the marks (a launch post, say) to cut it by */
+.window { display: grid; gap: 8px; padding: 10px 14px; margin-bottom: 14px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); }
+.window.on { border-color: var(--accent); }
+.window-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 13px; }
+.window-row > b { width: 62px; font-size: 12px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-2); }
+.window input { background: var(--surface-2); color: var(--ink); border: 1px solid var(--border); border-radius: var(--radius); padding: 4px 8px; font: inherit; color-scheme: dark; }
+.window #mark-label { width: 250px; }
+.marks { display: inline-flex; flex-wrap: wrap; gap: 6px; }
+.mark-wrap { display: inline-flex; border: 1px solid var(--border); border-radius: 999px; overflow: hidden; }
+.mark-wrap button { background: transparent; color: var(--ink); border: 0; padding: 3px 10px; cursor: pointer; font-size: 12.5px; }
+.mark-wrap button:hover { background: var(--surface-2); }
+.mark-wrap .mark.active { background: var(--accent); color: #111; font-weight: 600; }
+.mark-wrap .mark-x { padding: 3px 8px 3px 4px; color: var(--muted); }
+.linechart rect.window { fill: var(--accent); opacity: 0.13; pointer-events: none; }
+.linechart rect.window.drag { opacity: 0.22; }
+.linechart line.mark { stroke: var(--accent); stroke-width: 1.5; stroke-dasharray: 4 3; pointer-events: none; }
+.linechart text.mark-label { fill: var(--accent); font-size: 11px; font-weight: 600; pointer-events: none; }

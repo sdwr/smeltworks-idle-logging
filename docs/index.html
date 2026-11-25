@@ -4,7 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Smeltworks Idle telemetry</title>
-<link rel="stylesheet" href="./style.css?v=8" />
+<link rel="stylesheet" href="./style.css?v=9" />
 </head>
 <body>
 <header class="topbar">
@@ -49,6 +49,22 @@
 
   <div id="content" hidden>
     <!-- period stats -->
+    <section class="window" id="window" aria-label="window on the timeline">
+      <div class="window-row">
+        <b>Window</b>
+        <input id="win-from" type="date" aria-label="window from" /> <span class="muted">to</span> <input id="win-to" type="date" aria-label="window to" />
+        <button class="btn ghost small" id="win-clear" hidden>clear</button>
+        <span class="muted" id="win-sub"></span>
+      </div>
+      <div class="window-row">
+        <b>Marks</b>
+        <span id="marks" class="marks"></span>
+        <input id="mark-date" type="date" aria-label="date of a new mark" />
+        <input id="mark-label" type="text" placeholder="what happened, e.g. Reddit post 2" maxlength="40" aria-label="name of a new mark" />
+        <button class="btn ghost small" id="mark-add">add mark</button>
+      </div>
+    </section>
+
     <section class="tiles" id="tiles"></section>
 
     <!-- activity over time -->
@@ -188,6 +204,6 @@
 <div id="tooltip" class="tooltip" hidden></div>
 
 <script src="./nodes.js?v=8"></script>
-<script src="./app.js?v=8"></script>
+<script src="./app.js?v=9"></script>
 </body>
 </html>
